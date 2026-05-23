@@ -4,8 +4,8 @@ import { useNavigate } from "react-router-dom";
 import { AdminPinModal } from "../components/AdminPinModal";
 import { Avatar } from "../components/Avatar";
 import { DEFAULT_DISPLAY_TITLE } from "../constants";
+import { getJoinUrl, isSupabaseConfigured, subscribeRoom } from "../game/roomStore";
 import { useRoomCode } from "../hooks/useRoomCode";
-import { getJoinUrl, getSocket, isServerConfigured } from "../socket";
 import type { PublicRoomState } from "../types";
 import "./DisplayPage.css";
 
@@ -16,27 +16,16 @@ export function DisplayPage() {
   const [showPin, setShowPin] = useState(false);
 
   useEffect(() => {
-    if (!roomCode || !isServerConfigured()) {
+    if (!roomCode || !isSupabaseConfigured()) {
       setRoom(null);
       return;
     }
-
-    const socket = getSocket();
-    const onUpdate = (state: PublicRoomState) => setRoom(state);
-    const onMissing = () => setRoom(null);
-
-    if (roomCode) {
-      socket.emit("display:join", roomCode);
-      socket.on("room:update", onUpdate);
-      socket.on("room:missing", onMissing);
-    } else {
-      setRoom(null);
-    }
-
-    return () => {
-      socket.off("room:update", onUpdate);
-      socket.off("room:missing", onMissing);
-    };
+    return subscribeRoom(
+      roomCode,
+      "display",
+      setRoom,
+      () => setRoom(null)
+    );
   }, [roomCode]);
 
   const joinUrl = roomCode ? getJoinUrl(roomCode) : "";
@@ -47,6 +36,17 @@ export function DisplayPage() {
     : [];
 
   const renderContent = () => {
+    if (!isSupabaseConfigured()) {
+      return (
+        <div className="display-welcome">
+          <h1 className="display-hero">{DEFAULT_DISPLAY_TITLE}</h1>
+          <p className="display-hint">
+            أضف مفاتيح Supabase في Vercel (انظر ملف SUPABASE.md)
+          </p>
+        </div>
+      );
+    }
+
     if (!room || !room.gameCreated) {
       return (
         <div className="display-welcome">
@@ -199,9 +199,7 @@ export function DisplayPage() {
   return (
     <>
       <div className="frame-border" />
-      <div className="page display-page">
-        {renderContent()}
-      </div>
+      <div className="page display-page">{renderContent()}</div>
       <button
         type="button"
         className="settings-fab"

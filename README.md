@@ -28,12 +28,11 @@ npm run dev
 5. النتائج → «متابعة» للسؤال التالي
 6. منصة التتويج عند الانتهاء
 
-## النشر على الإنترنت (Vercel + Render)
+## النشر على الإنترنت
 
-اتبع الدليل خطوة بخطوة: **[DEPLOY.md](./DEPLOY.md)**
+**Vercel** للموقع + **Supabase** للعبة (بدون Render).
 
-- **Vercel:** الواجهة (`client`) + متغير `VITE_SERVER_URL`
-- **Render:** الخادم (`server`) + متغير `CLIENT_ORIGIN` = رابط Vercel
+راجع **[SUPABASE.md](./SUPABASE.md)** و **[DEPLOY.md](./DEPLOY.md)**
 
 ## الإنتاج المحلي
 

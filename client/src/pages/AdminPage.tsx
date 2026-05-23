@@ -2,8 +2,22 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { QuestionEditor } from "../components/QuestionEditor";
 import { DEFAULT_DISPLAY_TITLE, MAX_DISPLAY_TITLE_LENGTH } from "../constants";
+import {
+  addQuestion,
+  continueFromQuestion,
+  continueFromResults,
+  createGame,
+  deleteQuestion,
+  randomBankQuestion,
+  setAgeRange,
+  setDisplayTitle as saveRoomTitle,
+  setTimer,
+  startGame,
+  subscribeRoom,
+  tickTimer,
+  updateQuestion,
+} from "../game/roomStore";
 import { useRoomCode } from "../hooks/useRoomCode";
-import { getSocket, isServerConfigured, waitForConnection } from "../socket";
 import type { PublicRoomState, Question } from "../types";
 import "./AdminPage.css";
 
@@ -16,126 +30,49 @@ export function AdminPage() {
   const [editing, setEditing] = useState<Question | null | "new">(null);
   const [ageMin, setAgeMin] = useState(7);
   const [ageMax, setAgeMax] = useState(60);
-  const [displayTitle, setDisplayTitle] = useState(DEFAULT_DISPLAY_TITLE);
+  const [titleDraft, setTitleDraft] = useState(DEFAULT_DISPLAY_TITLE);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!roomCode || !isServerConfigured()) {
+    if (!roomCode) {
       setRoom(null);
       return;
     }
-
-    const socket = getSocket();
-    const onUpdate = (state: PublicRoomState) => {
-      setRoom(state);
-      setAgeMin(state.ageMin);
-      setAgeMax(state.ageMax);
-      setDisplayTitle(state.displayTitle || DEFAULT_DISPLAY_TITLE);
-    };
-    const onMissing = () => {
+    return subscribeRoom(roomCode, "admin", setRoom, () => {
       clearRoomCode();
       setRoom(null);
-    };
-
-    if (roomCode) {
-      socket.emit("admin:join", roomCode);
-      socket.on("room:update", onUpdate);
-      socket.on("room:missing", onMissing);
-    } else {
-      setRoom(null);
-    }
-
-    return () => {
-      socket.off("room:update", onUpdate);
-      socket.off("room:missing", onMissing);
-    };
+    });
   }, [roomCode, clearRoomCode]);
 
-  const withConnection = async (action: () => void) => {
+  useEffect(() => {
+    if (room?.displayTitle) setTitleDraft(room.displayTitle);
+  }, [room?.displayTitle]);
+
+  useEffect(() => {
+    if (!roomCode || room?.phase !== "answering") return;
+    const id = setInterval(() => {
+      tickTimer(roomCode).catch(console.error);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [roomCode, room?.phase]);
+
+  const run = async (action: () => Promise<void>) => {
     if (busy) return;
     setBusy(true);
     try {
-      await waitForConnection();
-      action();
+      await action();
     } catch (err) {
-      alert(err instanceof Error ? err.message : "فشل الاتصال بالخادم");
+      alert(err instanceof Error ? err.message : "حدث خطأ");
     } finally {
       setBusy(false);
     }
   };
 
-  const createGame = () => {
-    withConnection(() => {
-      getSocket().emit("admin:createGame", (newCode: string) => {
-        saveRoomCode(newCode);
-        getSocket().emit("admin:join", newCode);
-      });
+  const createNewGame = () =>
+    run(async () => {
+      const code = await createGame();
+      saveRoomCode(code);
     });
-  };
-
-  const setAge = () => {
-    if (!roomCode) return;
-    withConnection(() => {
-      getSocket().emit("admin:setAge", roomCode, ageMin, ageMax);
-    });
-  };
-
-  const saveDisplayTitle = () => {
-    if (!roomCode) return;
-    withConnection(() => {
-      getSocket().emit("admin:setDisplayTitle", roomCode, displayTitle);
-    });
-  };
-
-  const addQuestion = (q: Omit<Question, "id"> & { id?: string }) => {
-    if (!roomCode) return;
-    withConnection(() => {
-      if (q.id) {
-        getSocket().emit("admin:updateQuestion", roomCode, q as Question, () => setEditing(null));
-      } else {
-        getSocket().emit("admin:addQuestion", roomCode, q, () => setEditing(null));
-      }
-    });
-  };
-
-  const deleteQuestion = (id: string) => {
-    if (!roomCode || !confirm("حذف هذا السؤال؟")) return;
-    withConnection(() => {
-      getSocket().emit("admin:deleteQuestion", roomCode, id, () => {});
-    });
-  };
-
-  const randomQuestion = () => {
-    if (!roomCode) return;
-    withConnection(() => {
-      getSocket().emit("admin:randomQuestion", roomCode, () => {});
-    });
-  };
-
-  const setTimer = (sec: number) => {
-    if (!roomCode) return;
-    withConnection(() => {
-      getSocket().emit("admin:setTimer", roomCode, sec);
-    });
-  };
-
-  const startGame = () => {
-    if (!roomCode) return;
-    withConnection(() => {
-      getSocket().emit("admin:startGame", roomCode, (ok: boolean) => {
-        if (!ok) alert("أضف سؤالاً واحداً على الأقل قبل البدء");
-      });
-    });
-  };
-
-  const continuePhase = () => {
-    if (!roomCode) return;
-    withConnection(() => {
-      getSocket().emit("admin:continue", roomCode, (ok: boolean) => {
-        if (!ok) alert("تعذر المتابعة");
-      });
-    });
-  };
 
   if (!roomCode || !room) {
     return (
@@ -153,7 +90,7 @@ export function AdminPage() {
           <button
             type="button"
             className="btn btn-primary"
-            onClick={createGame}
+            onClick={createNewGame}
             disabled={busy}
           >
             {busy ? "جاري الإنشاء..." : "إنشاء لعبة جديدة"}
@@ -187,20 +124,18 @@ export function AdminPage() {
 
       <section className="admin-section card title-section">
         <h2>عنوان شاشة العرض</h2>
-        <p className="title-hint">يظهر كعنوان كبير على شاشة البروجكتر (الانتظار والانضمام)</p>
         <div className="title-row">
           <input
             className="input-field"
             type="text"
             maxLength={MAX_DISPLAY_TITLE_LENGTH}
-            value={displayTitle}
-            onChange={(e) => setDisplayTitle(e.target.value)}
-            placeholder={DEFAULT_DISPLAY_TITLE}
+            value={titleDraft}
+            onChange={(e) => setTitleDraft(e.target.value)}
           />
           <button
             type="button"
             className="btn btn-primary"
-            onClick={saveDisplayTitle}
+            onClick={() => run(() => saveRoomTitle(roomCode, titleDraft))}
             disabled={busy}
           >
             حفظ العنوان
@@ -211,7 +146,6 @@ export function AdminPage() {
       {!inGame && (
         <section className="admin-section card">
           <h2>إعداد اللعبة</h2>
-
           <div className="age-row">
             <label>
               العمر من
@@ -235,7 +169,12 @@ export function AdminPage() {
                 onChange={(e) => setAgeMax(Number(e.target.value))}
               />
             </label>
-            <button type="button" className="btn btn-outline" onClick={setAge} disabled={busy}>
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={() => run(() => setAgeRange(roomCode, ageMin, ageMax))}
+              disabled={busy}
+            >
               تطبيق
             </button>
           </div>
@@ -252,7 +191,7 @@ export function AdminPage() {
             <button
               type="button"
               className="btn btn-secondary"
-              onClick={randomQuestion}
+              onClick={() => run(() => randomBankQuestion(roomCode))}
               disabled={busy}
             >
               سؤال عشوائي من البنك
@@ -262,7 +201,13 @@ export function AdminPage() {
           {editing && (
             <QuestionEditor
               initial={editing === "new" ? undefined : editing}
-              onSave={addQuestion}
+              onSave={(qu) =>
+                run(async () => {
+                  if (qu.id) await updateQuestion(roomCode, qu as Question);
+                  else await addQuestion(roomCode, qu);
+                  setEditing(null);
+                })
+              }
               onCancel={() => setEditing(null)}
             />
           )}
@@ -272,7 +217,6 @@ export function AdminPage() {
               <li key={qu.id}>
                 <span>
                   {i + 1}. {qu.text.slice(0, 60)}
-                  {qu.text.length > 60 ? "…" : ""}
                   {qu.fromBank && <em className="bank-tag"> (بنك)</em>}
                 </span>
                 <div>
@@ -280,14 +224,13 @@ export function AdminPage() {
                     type="button"
                     className="btn btn-outline btn-sm"
                     onClick={() => setEditing(qu)}
-                    disabled={busy}
                   >
                     تعديل
                   </button>
                   <button
                     type="button"
                     className="btn btn-ghost btn-sm"
-                    onClick={() => deleteQuestion(qu.id)}
+                    onClick={() => run(() => deleteQuestion(roomCode, qu.id))}
                     disabled={busy}
                   >
                     حذف
@@ -302,7 +245,12 @@ export function AdminPage() {
           <button
             type="button"
             className="btn btn-primary btn-start"
-            onClick={startGame}
+            onClick={() =>
+              run(async () => {
+                const ok = await startGame(roomCode);
+                if (!ok) alert("أضف سؤالاً واحداً على الأقل");
+              })
+            }
             disabled={room.questions.length === 0 || busy}
           >
             بدء اللعبة
@@ -313,22 +261,7 @@ export function AdminPage() {
       {inGame && room.phase !== "finished" && (
         <section className="admin-section card admin-live">
           <p className="phase-badge">المرحلة: {phaseLabel(room.phase)}</p>
-          <p>
-            السؤال {room.currentIndex + 1} من {room.totalQuestions}
-          </p>
-
-          {q && (
-            <div className="admin-question-preview">
-              <h3>{q.text}</h3>
-              <ul>
-                {q.options.map((o, i) => (
-                  <li key={i} className={i === q.correctIndex ? "correct" : ""}>
-                    {o.text} {i === q.correctIndex && "✓"}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          {q && <h3 style={{ marginTop: "0.75rem" }}>{q.text}</h3>}
 
           {room.phase === "question" && (
             <>
@@ -339,7 +272,7 @@ export function AdminPage() {
                     key={t}
                     type="button"
                     className={`btn btn-outline btn-sm ${room.timerSeconds === t ? "active" : ""}`}
-                    onClick={() => setTimer(t)}
+                    onClick={() => run(() => setTimer(roomCode, t))}
                     disabled={busy}
                   >
                     {t} ث
@@ -349,7 +282,12 @@ export function AdminPage() {
               <button
                 type="button"
                 className="btn btn-primary btn-start"
-                onClick={continuePhase}
+                onClick={() =>
+                  run(async () => {
+                    const ok = await continueFromQuestion(roomCode);
+                    if (!ok) alert("تعذر المتابعة");
+                  })
+                }
                 disabled={busy}
               >
                 متابعة — إظهار الخيارات وبدء العداد
@@ -367,7 +305,12 @@ export function AdminPage() {
             <button
               type="button"
               className="btn btn-primary btn-start"
-              onClick={continuePhase}
+              onClick={() =>
+                run(async () => {
+                  const ok = await continueFromResults(roomCode);
+                  if (!ok) alert("تعذر المتابعة");
+                })
+              }
               disabled={busy}
             >
               متابعة — السؤال التالي
@@ -379,13 +322,12 @@ export function AdminPage() {
       {room.phase === "finished" && (
         <section className="admin-section card">
           <h2>انتهت اللعبة</h2>
-          <p>تظهر منصة التتويج على شاشة العرض.</p>
           <button
             type="button"
             className="btn btn-secondary"
             onClick={() => {
               clearRoomCode();
-              createGame();
+              createNewGame();
             }}
             disabled={busy}
           >

@@ -1,17 +1,11 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Avatar } from "../components/Avatar";
-import { getSocket, waitForConnection } from "../socket";
+import { joinPlayer, submitAnswer, subscribeRoom } from "../game/roomStore";
 import type { PublicRoomState } from "../types";
 import "./PlayPage.css";
 
 const PLAYER_KEY = "jamaatna_player";
-
-interface StoredPlayer {
-  roomCode: string;
-  playerId: string;
-  name: string;
-}
 
 export function PlayPage() {
   const [params] = useSearchParams();
@@ -26,46 +20,17 @@ export function PlayPage() {
   const [selected, setSelected] = useState<number | null>(null);
 
   useEffect(() => {
-    const stored = sessionStorage.getItem(PLAYER_KEY);
-    if (stored) {
-      try {
-        const p: StoredPlayer = JSON.parse(stored);
-        if (p.roomCode && p.playerId) {
-          setRoomCode(p.roomCode);
-          setName(p.name);
-          setPlayerId(p.playerId);
-        }
-      } catch {
-        /* ignore */
-      }
-    }
-  }, []);
-
-  useEffect(() => {
     if (roomFromUrl) setRoomCode(roomFromUrl);
   }, [roomFromUrl]);
 
   useEffect(() => {
     if (step !== "play" || !roomCode || !playerId) return;
-
-    const socket = getSocket();
-    const onUpdate = (state: PublicRoomState) => {
+    return subscribeRoom(roomCode, "player", (state) => {
       setRoom(state);
-      if (state.phase === "question" || state.phase === "answering") {
-        if (state.phase === "question") setSelected(null);
-      }
-      if (state.phase === "answering" && selected !== null) {
-        /* keep selection */
-      } else if (state.phase !== "answering") {
-        setSelected(null);
-      }
-    };
-
-    socket.on("room:update", onUpdate);
-    return () => {
-      socket.off("room:update", onUpdate);
-    };
-  }, [step, roomCode, playerId, selected]);
+      if (state.phase === "question") setSelected(null);
+      else if (state.phase !== "answering") setSelected(null);
+    });
+  }, [step, roomCode, playerId]);
 
   const join = async () => {
     setError("");
@@ -82,40 +47,35 @@ export function PlayPage() {
     sessionStorage.removeItem(PLAYER_KEY);
 
     try {
-      await waitForConnection();
-      getSocket().emit(
-        "player:join",
-        roomCode.trim(),
-        trimmed,
-        (res: { ok: boolean; message?: string; playerId?: string; state?: PublicRoomState }) => {
-          if (!res.ok) {
-            setError(res.message || "فشل الدخول");
-            return;
-          }
-          const pid = res.playerId!;
-          setPlayerId(pid);
-          setRoom(res.state || null);
-          setStep("play");
-          sessionStorage.setItem(
-            PLAYER_KEY,
-            JSON.stringify({ roomCode: roomCode.trim(), playerId: pid, name: trimmed })
-          );
-        }
+      const result = await joinPlayer(roomCode.trim(), trimmed);
+      if (!result) {
+        setError("تعذر الدخول. تأكد من رمز الغرفة وأن المضيف أنشأ اللعبة.");
+        return;
+      }
+      setPlayerId(result.playerId);
+      setRoom(result.state);
+      setStep("play");
+      sessionStorage.setItem(
+        PLAYER_KEY,
+        JSON.stringify({
+          roomCode: roomCode.trim(),
+          playerId: result.playerId,
+          name: trimmed,
+        })
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "فشل الاتصال بالخادم");
+      setError(err instanceof Error ? err.message : "فشل الاتصال");
     }
   };
 
-  const submitAnswer = async (index: number) => {
+  const answer = async (index: number) => {
     if (!room || room.phase !== "answering" || selected !== null) return;
     setSelected(index);
     try {
-      await waitForConnection();
-      getSocket().emit("player:answer", roomCode, playerId, index);
+      await submitAnswer(roomCode, playerId, index);
     } catch {
       setSelected(null);
-      setError("فُقد الاتصال — حاول مرة أخرى");
+      setError("فشل إرسال الإجابة");
     }
   };
 
@@ -127,14 +87,11 @@ export function PlayPage() {
         <div className="join-card">
           <Avatar index={0} size={72} />
           <h1 className="display-title">انضم للتحدي</h1>
-          <p className="join-sub">أدخل اسمك ورمز الغرفة</p>
-
           <input
             className="input-field"
             placeholder="اسمك (إلزامي)"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            autoComplete="name"
           />
           <input
             className="input-field"
@@ -184,19 +141,17 @@ export function PlayPage() {
         <div className={`result-banner ${myResult.correct ? "correct" : "wrong"}`}>
           {myResult.correct ? (
             <>
-              <span className="result-icon">✓</span>
               <p>إجابة صحيحة</p>
-              <p className="result-points">القيمة: +1000 نقطة</p>
+              <p className="result-points">+1000 نقطة</p>
             </>
           ) : (
             <>
-              <span className="result-icon">✗</span>
               <p>إجابة خاطئة</p>
               <p className="result-points">0 نقطة</p>
             </>
           )}
         </div>
-        <p className="wait-host">في انتظار المضيف للسؤال التالي...</p>
+        <p className="wait-host">في انتظار المضيف...</p>
       </div>
     );
   }
@@ -206,8 +161,7 @@ export function PlayPage() {
       <div className="page play-page wait-step">
         <Avatar index={room.players.find((p) => p.id === playerId)?.avatarIndex ?? 0} size={64} />
         <h2>استعد!</h2>
-        <p>يُعرض السؤال الآن على الشاشة الكبيرة — انتظر ظهور الخيارات</p>
-        <div className="pulse-dot" />
+        <p>السؤال على الشاشة الكبيرة — انتظر الخيارات</p>
       </div>
     );
   }
@@ -225,13 +179,13 @@ export function PlayPage() {
               type="button"
               className={`answer-btn ${selected === i ? "selected" : ""}`}
               disabled={selected !== null}
-              onClick={() => submitAnswer(i)}
+              onClick={() => answer(i)}
             >
               {opt.text}
             </button>
           ))}
         </div>
-        {selected !== null && <p className="locked-msg">تم تسجيل إجابتك — انتظر البقية</p>}
+        {selected !== null && <p className="locked-msg">تم تسجيل إجابتك</p>}
       </div>
     );
   }

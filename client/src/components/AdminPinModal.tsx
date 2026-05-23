@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { getSocket, waitForConnection } from "../socket";
+import { verifyAdmin } from "../game/roomStore";
 
 interface AdminPinModalProps {
   onClose: () => void;
@@ -9,24 +9,12 @@ interface AdminPinModalProps {
 export function AdminPinModal({ onClose, onSuccess }: AdminPinModalProps) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
 
-  const submit = async () => {
-    setError("");
-    setBusy(true);
-    try {
-      await waitForConnection();
-      getSocket().emit("admin:authenticate", pin, (ok: boolean) => {
-        if (ok) {
-          onSuccess();
-        } else {
-          setError("رمز الإدارة غير صحيح");
-        }
-        setBusy(false);
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "فشل الاتصال");
-      setBusy(false);
+  const submit = () => {
+    if (verifyAdmin(pin)) {
+      onSuccess();
+    } else {
+      setError("رمز الإدارة غير صحيح");
     }
   };
 
@@ -46,7 +34,7 @@ export function AdminPinModal({ onClose, onSuccess }: AdminPinModalProps) {
             setPin(e.target.value);
             setError("");
           }}
-          onKeyDown={(e) => e.key === "Enter" && !busy && submit()}
+          onKeyDown={(e) => e.key === "Enter" && submit()}
           autoFocus
         />
         {error && (
@@ -55,16 +43,10 @@ export function AdminPinModal({ onClose, onSuccess }: AdminPinModalProps) {
           </p>
         )}
         <div style={{ display: "flex", gap: "0.75rem", marginTop: "1.25rem" }}>
-          <button
-            type="button"
-            className="btn btn-primary"
-            style={{ flex: 1 }}
-            onClick={submit}
-            disabled={busy}
-          >
-            {busy ? "جاري الاتصال..." : "دخول"}
+          <button type="button" className="btn btn-primary" style={{ flex: 1 }} onClick={submit}>
+            دخول
           </button>
-          <button type="button" className="btn btn-outline" onClick={onClose} disabled={busy}>
+          <button type="button" className="btn btn-outline" onClick={onClose}>
             إلغاء
           </button>
         </div>
