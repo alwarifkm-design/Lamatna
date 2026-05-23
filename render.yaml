@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: lamaa-family-api
+    runtime: node
+    rootDir: server
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: SERVE_STATIC
+        value: "false"
+      - key: CLIENT_ORIGIN
+        sync: false
