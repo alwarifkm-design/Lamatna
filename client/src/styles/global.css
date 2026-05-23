@@ -199,28 +199,6 @@ select {
   box-shadow: var(--shadow-lg);
 }
 
-.connection-banner {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 200;
-  padding: 0.65rem 1rem;
-  text-align: center;
-  font-size: 0.9rem;
-  font-weight: 600;
-}
-
-.connection-banner.warn {
-  background: #fff3cd;
-  color: #664d03;
-}
-
-.connection-banner.error {
-  background: #f8d7da;
-  color: #842029;
-}
-
 .settings-fab {
   position: fixed;
   top: 1rem;

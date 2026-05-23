@@ -2,43 +2,87 @@ import { io, Socket } from "socket.io-client";
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
 
-function resolveServerUrl(): string | null {
-  const fromEnv = import.meta.env.VITE_SERVER_URL?.replace(/\/$/, "");
-  if (fromEnv) return fromEnv;
-  if (import.meta.env.DEV) return "http://localhost:3001";
-  return null;
-}
-
-const SERVER_URL = resolveServerUrl();
+const STORAGE_KEY = "jamaatna_server_url";
 
 let socket: Socket | null = null;
+let activeUrl: string | null = null;
 const statusListeners = new Set<(status: ConnectionStatus) => void>();
 
 function setStatus(status: ConnectionStatus) {
   statusListeners.forEach((fn) => fn(status));
 }
 
-export function isServerConfigured(): boolean {
-  return SERVER_URL !== null;
+function cleanUrl(url: string): string {
+  return url.trim().replace(/\/$/, "");
 }
 
+function fromEnv(): string | null {
+  const v = import.meta.env.VITE_SERVER_URL;
+  return v ? cleanUrl(v) : null;
+}
+
+function fromStorage(): string | null {
+  const v = localStorage.getItem(STORAGE_KEY);
+  return v ? cleanUrl(v) : null;
+}
+
+/** رابط خادم Render — من Vercel أو من الإعداد اليدوي في المتصفح */
 export function getServerUrl(): string | null {
-  return SERVER_URL;
+  return fromEnv() || fromStorage() || (import.meta.env.DEV ? "http://localhost:3001" : null);
+}
+
+export function isServerConfigured(): boolean {
+  return getServerUrl() !== null;
+}
+
+export function isEnvServerConfigured(): boolean {
+  return fromEnv() !== null;
+}
+
+/** حفظ رابط الخادم يدوياً (حل فوري بدون إعادة نشر Vercel) */
+export function setManualServerUrl(url: string): void {
+  const cleaned = cleanUrl(url);
+  if (!/^https?:\/\//i.test(cleaned)) {
+    throw new Error("أدخل رابطاً يبدأ بـ https://");
+  }
+  localStorage.setItem(STORAGE_KEY, cleaned);
+  resetSocket();
+  getSocket();
+}
+
+export function clearManualServerUrl(): void {
+  localStorage.removeItem(STORAGE_KEY);
+  resetSocket();
+}
+
+function resetSocket() {
+  if (socket) {
+    socket.removeAllListeners();
+    socket.disconnect();
+    socket = null;
+  }
+  activeUrl = null;
 }
 
 export function subscribeConnectionStatus(fn: (status: ConnectionStatus) => void): () => void {
   statusListeners.add(fn);
-  const s = socket;
-  fn(s?.connected ? "connected" : SERVER_URL ? "connecting" : "error");
+  fn(socket?.connected ? "connected" : getServerUrl() ? "connecting" : "error");
   return () => statusListeners.delete(fn);
 }
 
 export function getSocket(): Socket {
-  if (!SERVER_URL) {
-    throw new Error("لم يُضبط VITE_SERVER_URL على Vercel");
+  const url = getServerUrl();
+  if (!url) {
+    throw new Error("لم يُضبط رابط الخادم");
   }
+
+  if (socket && activeUrl !== url) {
+    resetSocket();
+  }
+
   if (!socket) {
-    socket = io(SERVER_URL, {
+    activeUrl = url;
+    socket = io(url, {
       autoConnect: true,
       transports: ["polling", "websocket"],
       reconnection: true,
@@ -62,7 +106,7 @@ export function waitForConnection(timeoutMs = 20000): Promise<Socket> {
       cleanup();
       reject(
         new Error(
-          "تعذر الاتصال بالخادم. تأكد من Render يعمل ومن VITE_SERVER_URL على Vercel."
+          "تعذر الاتصال بالخادم. تأكد أن Render يعمل وأن الرابط صحيح (https://...onrender.com)"
         )
       );
     }, timeoutMs);
