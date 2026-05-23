@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Avatar } from "../components/Avatar";
-import { Logo } from "../components/Logo";
-import { getSocket } from "../socket";
+import { getSocket, waitForConnection } from "../socket";
 import type { PublicRoomState } from "../types";
 import "./PlayPage.css";
 
@@ -68,7 +67,7 @@ export function PlayPage() {
     };
   }, [step, roomCode, playerId, selected]);
 
-  const join = () => {
+  const join = async () => {
     setError("");
     const trimmed = name.trim();
     if (!trimmed) {
@@ -82,31 +81,42 @@ export function PlayPage() {
 
     sessionStorage.removeItem(PLAYER_KEY);
 
-    getSocket().emit(
-      "player:join",
-      roomCode.trim(),
-      trimmed,
-      (res: { ok: boolean; message?: string; playerId?: string; state?: PublicRoomState }) => {
-        if (!res.ok) {
-          setError(res.message || "فشل الدخول");
-          return;
+    try {
+      await waitForConnection();
+      getSocket().emit(
+        "player:join",
+        roomCode.trim(),
+        trimmed,
+        (res: { ok: boolean; message?: string; playerId?: string; state?: PublicRoomState }) => {
+          if (!res.ok) {
+            setError(res.message || "فشل الدخول");
+            return;
+          }
+          const pid = res.playerId!;
+          setPlayerId(pid);
+          setRoom(res.state || null);
+          setStep("play");
+          sessionStorage.setItem(
+            PLAYER_KEY,
+            JSON.stringify({ roomCode: roomCode.trim(), playerId: pid, name: trimmed })
+          );
         }
-        const pid = res.playerId!;
-        setPlayerId(pid);
-        setRoom(res.state || null);
-        setStep("play");
-        sessionStorage.setItem(
-          PLAYER_KEY,
-          JSON.stringify({ roomCode: roomCode.trim(), playerId: pid, name: trimmed })
-        );
-      }
-    );
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "فشل الاتصال بالخادم");
+    }
   };
 
-  const submitAnswer = (index: number) => {
+  const submitAnswer = async (index: number) => {
     if (!room || room.phase !== "answering" || selected !== null) return;
     setSelected(index);
-    getSocket().emit("player:answer", roomCode, playerId, index);
+    try {
+      await waitForConnection();
+      getSocket().emit("player:answer", roomCode, playerId, index);
+    } catch {
+      setSelected(null);
+      setError("فُقد الاتصال — حاول مرة أخرى");
+    }
   };
 
   const myResult = room?.lastResults?.find((r) => r.playerId === playerId);
@@ -115,7 +125,7 @@ export function PlayPage() {
     return (
       <div className="page play-page join-step">
         <div className="join-card">
-          <Logo size={80} />
+          <Avatar index={0} size={72} />
           <h1 className="display-title">انضم للتحدي</h1>
           <p className="join-sub">أدخل اسمك ورمز الغرفة</p>
 

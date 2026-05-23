@@ -42,7 +42,7 @@ io.on("connection", (socket) => {
   socket.on("display:join", (code: string) => {
     const room = gameManager.getRoom(code);
     if (!room) {
-      socket.emit("error", { message: "الغرفة غير موجودة" });
+      socket.emit("room:missing");
       return;
     }
     socket.join(`display:${code}`);
@@ -62,6 +62,11 @@ io.on("connection", (socket) => {
   });
 
   socket.on("admin:join", (code: string) => {
+    const room = gameManager.getRoom(code);
+    if (!room) {
+      socket.emit("room:missing");
+      return;
+    }
     socket.join(`admin:${code}`);
     const state = gameManager.getPublicState(code, false);
     if (state) socket.emit("room:update", state);

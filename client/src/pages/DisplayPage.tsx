@@ -3,35 +3,43 @@ import { QRCodeSVG } from "qrcode.react";
 import { useNavigate } from "react-router-dom";
 import { AdminPinModal } from "../components/AdminPinModal";
 import { Avatar } from "../components/Avatar";
-import { Logo } from "../components/Logo";
-import { getJoinUrl, getSocket } from "../socket";
 import { DEFAULT_DISPLAY_TITLE } from "../constants";
+import { useRoomCode } from "../hooks/useRoomCode";
+import { getJoinUrl, getSocket, isServerConfigured } from "../socket";
 import type { PublicRoomState } from "../types";
 import "./DisplayPage.css";
 
-const ROOM_KEY = "jamaatna_room";
-
 export function DisplayPage() {
   const navigate = useNavigate();
+  const { roomCode } = useRoomCode();
   const [room, setRoom] = useState<PublicRoomState | null>(null);
   const [showPin, setShowPin] = useState(false);
-  const code = localStorage.getItem(ROOM_KEY);
 
   useEffect(() => {
+    if (!roomCode || !isServerConfigured()) {
+      setRoom(null);
+      return;
+    }
+
     const socket = getSocket();
     const onUpdate = (state: PublicRoomState) => setRoom(state);
+    const onMissing = () => setRoom(null);
 
-    if (code) {
-      socket.emit("display:join", code);
+    if (roomCode) {
+      socket.emit("display:join", roomCode);
       socket.on("room:update", onUpdate);
+      socket.on("room:missing", onMissing);
+    } else {
+      setRoom(null);
     }
 
     return () => {
       socket.off("room:update", onUpdate);
+      socket.off("room:missing", onMissing);
     };
-  }, [code]);
+  }, [roomCode]);
 
-  const joinUrl = code ? getJoinUrl(code) : "";
+  const joinUrl = roomCode ? getJoinUrl(roomCode) : "";
   const heroTitle = room?.displayTitle?.trim() || DEFAULT_DISPLAY_TITLE;
 
   const leaderboard = room
@@ -42,7 +50,6 @@ export function DisplayPage() {
     if (!room || !room.gameCreated) {
       return (
         <div className="display-welcome">
-          <Logo size={120} className="display-logo" />
           <h1 className="display-hero">{heroTitle}</h1>
           <p className="display-sub">تحدي العائلة التفاعلي</p>
           <p className="display-hint">في انتظار تجهيز اللعبة من قبل المضيف...</p>
@@ -53,7 +60,6 @@ export function DisplayPage() {
     if (!room.gameStarted) {
       return (
         <div className="display-lobby">
-          <Logo size={100} className="display-logo" />
           <h1 className="display-hero">{heroTitle}</h1>
           <p className="display-sub">امسح الباركود أو أدخل الرمز للانضمام</p>
           <div className="qr-section">

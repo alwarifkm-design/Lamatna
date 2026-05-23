@@ -1,24 +1,30 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { QuestionEditor } from "../components/QuestionEditor";
-import { getSocket } from "../socket";
 import { DEFAULT_DISPLAY_TITLE, MAX_DISPLAY_TITLE_LENGTH } from "../constants";
+import { useRoomCode } from "../hooks/useRoomCode";
+import { getSocket, isServerConfigured, waitForConnection } from "../socket";
 import type { PublicRoomState, Question } from "../types";
 import "./AdminPage.css";
 
-const ROOM_KEY = "jamaatna_room";
 const TIMER_OPTIONS = [15, 20, 30, 45, 60];
 
 export function AdminPage() {
   const navigate = useNavigate();
+  const { roomCode, saveRoomCode, clearRoomCode } = useRoomCode();
   const [room, setRoom] = useState<PublicRoomState | null>(null);
   const [editing, setEditing] = useState<Question | null | "new">(null);
   const [ageMin, setAgeMin] = useState(7);
   const [ageMax, setAgeMax] = useState(60);
   const [displayTitle, setDisplayTitle] = useState(DEFAULT_DISPLAY_TITLE);
-  const code = localStorage.getItem(ROOM_KEY);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    if (!roomCode || !isServerConfigured()) {
+      setRoom(null);
+      return;
+    }
+
     const socket = getSocket();
     const onUpdate = (state: PublicRoomState) => {
       setRoom(state);
@@ -26,74 +32,112 @@ export function AdminPage() {
       setAgeMax(state.ageMax);
       setDisplayTitle(state.displayTitle || DEFAULT_DISPLAY_TITLE);
     };
+    const onMissing = () => {
+      clearRoomCode();
+      setRoom(null);
+    };
 
-    if (code) {
-      socket.emit("admin:join", code);
+    if (roomCode) {
+      socket.emit("admin:join", roomCode);
       socket.on("room:update", onUpdate);
+      socket.on("room:missing", onMissing);
+    } else {
+      setRoom(null);
     }
 
     return () => {
       socket.off("room:update", onUpdate);
+      socket.off("room:missing", onMissing);
     };
-  }, [code]);
+  }, [roomCode, clearRoomCode]);
+
+  const withConnection = async (action: () => void) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await waitForConnection();
+      action();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "فشل الاتصال بالخادم");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const createGame = () => {
-    getSocket().emit("admin:createGame", (newCode: string) => {
-      localStorage.setItem(ROOM_KEY, newCode);
-      getSocket().emit("admin:join", newCode);
-      window.location.href = "/admin";
+    withConnection(() => {
+      getSocket().emit("admin:createGame", (newCode: string) => {
+        saveRoomCode(newCode);
+        getSocket().emit("admin:join", newCode);
+      });
     });
   };
 
   const setAge = () => {
-    if (!code) return;
-    getSocket().emit("admin:setAge", code, ageMin, ageMax);
+    if (!roomCode) return;
+    withConnection(() => {
+      getSocket().emit("admin:setAge", roomCode, ageMin, ageMax);
+    });
   };
 
   const saveDisplayTitle = () => {
-    if (!code) return;
-    getSocket().emit("admin:setDisplayTitle", code, displayTitle);
+    if (!roomCode) return;
+    withConnection(() => {
+      getSocket().emit("admin:setDisplayTitle", roomCode, displayTitle);
+    });
   };
 
   const addQuestion = (q: Omit<Question, "id"> & { id?: string }) => {
-    if (!code) return;
-    if (q.id) {
-      getSocket().emit("admin:updateQuestion", code, q as Question, () => setEditing(null));
-    } else {
-      getSocket().emit("admin:addQuestion", code, q, () => setEditing(null));
-    }
+    if (!roomCode) return;
+    withConnection(() => {
+      if (q.id) {
+        getSocket().emit("admin:updateQuestion", roomCode, q as Question, () => setEditing(null));
+      } else {
+        getSocket().emit("admin:addQuestion", roomCode, q, () => setEditing(null));
+      }
+    });
   };
 
   const deleteQuestion = (id: string) => {
-    if (!code || !confirm("حذف هذا السؤال؟")) return;
-    getSocket().emit("admin:deleteQuestion", code, id, () => {});
+    if (!roomCode || !confirm("حذف هذا السؤال؟")) return;
+    withConnection(() => {
+      getSocket().emit("admin:deleteQuestion", roomCode, id, () => {});
+    });
   };
 
   const randomQuestion = () => {
-    if (!code) return;
-    getSocket().emit("admin:randomQuestion", code, () => {});
+    if (!roomCode) return;
+    withConnection(() => {
+      getSocket().emit("admin:randomQuestion", roomCode, () => {});
+    });
   };
 
   const setTimer = (sec: number) => {
-    if (!code) return;
-    getSocket().emit("admin:setTimer", code, sec);
+    if (!roomCode) return;
+    withConnection(() => {
+      getSocket().emit("admin:setTimer", roomCode, sec);
+    });
   };
 
   const startGame = () => {
-    if (!code) return;
-    getSocket().emit("admin:startGame", code, (ok: boolean) => {
-      if (!ok) alert("أضف سؤالاً واحداً على الأقل قبل البدء");
+    if (!roomCode) return;
+    withConnection(() => {
+      getSocket().emit("admin:startGame", roomCode, (ok: boolean) => {
+        if (!ok) alert("أضف سؤالاً واحداً على الأقل قبل البدء");
+      });
     });
   };
 
   const continuePhase = () => {
-    if (!code) return;
-    getSocket().emit("admin:continue", code, (ok: boolean) => {
-      if (!ok) alert("تعذر المتابعة");
+    if (!roomCode) return;
+    withConnection(() => {
+      getSocket().emit("admin:continue", roomCode, (ok: boolean) => {
+        if (!ok) alert("تعذر المتابعة");
+      });
     });
   };
 
-  if (!code || !room) {
+  if (!roomCode || !room) {
     return (
       <div className="page admin-page">
         <header className="admin-header">
@@ -106,8 +150,13 @@ export function AdminPage() {
           <p style={{ marginBottom: "1.5rem" }}>
             أنشئ لعبة جديدة لبدء التحدي. سيظهر الباركود ورمز الغرفة على شاشة العرض بعد الإنشاء.
           </p>
-          <button type="button" className="btn btn-primary" onClick={createGame}>
-            إنشاء لعبة جديدة
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={createGame}
+            disabled={busy}
+          >
+            {busy ? "جاري الإنشاء..." : "إنشاء لعبة جديدة"}
           </button>
         </div>
       </div>
@@ -148,7 +197,12 @@ export function AdminPage() {
             onChange={(e) => setDisplayTitle(e.target.value)}
             placeholder={DEFAULT_DISPLAY_TITLE}
           />
-          <button type="button" className="btn btn-primary" onClick={saveDisplayTitle}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={saveDisplayTitle}
+            disabled={busy}
+          >
             حفظ العنوان
           </button>
         </div>
@@ -181,16 +235,26 @@ export function AdminPage() {
                 onChange={(e) => setAgeMax(Number(e.target.value))}
               />
             </label>
-            <button type="button" className="btn btn-outline" onClick={setAge}>
+            <button type="button" className="btn btn-outline" onClick={setAge} disabled={busy}>
               تطبيق
             </button>
           </div>
 
           <div className="question-toolbar">
-            <button type="button" className="btn btn-primary" onClick={() => setEditing("new")}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => setEditing("new")}
+              disabled={busy}
+            >
               إضافة سؤال
             </button>
-            <button type="button" className="btn btn-secondary" onClick={randomQuestion}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={randomQuestion}
+              disabled={busy}
+            >
               سؤال عشوائي من البنك
             </button>
           </div>
@@ -212,10 +276,20 @@ export function AdminPage() {
                   {qu.fromBank && <em className="bank-tag"> (بنك)</em>}
                 </span>
                 <div>
-                  <button type="button" className="btn btn-outline btn-sm" onClick={() => setEditing(qu)}>
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    onClick={() => setEditing(qu)}
+                    disabled={busy}
+                  >
                     تعديل
                   </button>
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => deleteQuestion(qu.id)}>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => deleteQuestion(qu.id)}
+                    disabled={busy}
+                  >
                     حذف
                   </button>
                 </div>
@@ -229,7 +303,7 @@ export function AdminPage() {
             type="button"
             className="btn btn-primary btn-start"
             onClick={startGame}
-            disabled={room.questions.length === 0}
+            disabled={room.questions.length === 0 || busy}
           >
             بدء اللعبة
           </button>
@@ -266,12 +340,18 @@ export function AdminPage() {
                     type="button"
                     className={`btn btn-outline btn-sm ${room.timerSeconds === t ? "active" : ""}`}
                     onClick={() => setTimer(t)}
+                    disabled={busy}
                   >
                     {t} ث
                   </button>
                 ))}
               </div>
-              <button type="button" className="btn btn-primary btn-start" onClick={continuePhase}>
+              <button
+                type="button"
+                className="btn btn-primary btn-start"
+                onClick={continuePhase}
+                disabled={busy}
+              >
                 متابعة — إظهار الخيارات وبدء العداد
               </button>
             </>
@@ -284,7 +364,12 @@ export function AdminPage() {
           )}
 
           {room.phase === "results" && (
-            <button type="button" className="btn btn-primary btn-start" onClick={continuePhase}>
+            <button
+              type="button"
+              className="btn btn-primary btn-start"
+              onClick={continuePhase}
+              disabled={busy}
+            >
               متابعة — السؤال التالي
             </button>
           )}
@@ -299,9 +384,10 @@ export function AdminPage() {
             type="button"
             className="btn btn-secondary"
             onClick={() => {
-              localStorage.removeItem(ROOM_KEY);
+              clearRoomCode();
               createGame();
             }}
+            disabled={busy}
           >
             لعبة جديدة
           </button>
