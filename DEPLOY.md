@@ -33,11 +33,17 @@
 ## الخطوة 3 — نشر الواجهة على Vercel
 
 1. ادخل [vercel.com](https://vercel.com) → **Add New Project** → اختر المستودع.
-2. **مهم — إعدادات المشروع:**
+2. **إعدادات المشروع (اختر أحد الخيارين):**
+
+   **الخيار أ — من جذر المستودع (موصى به، يوجد `vercel.json` جاهز):**
+   - **Root Directory:** اتركه فارغاً `.`
+   - لا تغيّر Build/Output يدوياً (يأخذها من `vercel.json`)
+
+   **الخيار ب — مجلد client فقط:**
    - **Root Directory:** `client`
-   - **Framework Preset:** Vite
    - **Build Command:** `npm run build`
    - **Output Directory:** `dist`
+
 3. **Environment Variables:**
    - `VITE_SERVER_URL` = رابط Render من الخطوة 2 (بدون `/` في النهاية)  
      مثال: `https://lamaa-family-api.onrender.com`
@@ -61,6 +67,20 @@
 | العرض (بروجكتر) | `https://مشروعك.vercel.app/` |
 | الإدارة | ⚙ → `242011` → `/admin` |
 | اللاعبون | `/play?room=XXXXXX` |
+
+---
+
+## Vercel لا ينشر / Build فاشل؟
+
+| السبب الشائع | الحل |
+|--------------|-----|
+| Root = جذر المشروع لكن لا يُثبَّت `client` | ارفع آخر نسية فيها `vercel.json` من الجذر، أو عيّن Root = `client` |
+| Output Directory خاطئ | من الجذر: `client/dist` — من داخل client: `dist` |
+| `vite: command not found` | Install Command يجب أن يكون `npm install --prefix client` أو Root = `client` |
+| الموقع يفتح لكن اللعبة لا تتصل | أضف `VITE_SERVER_URL` = رابط Render |
+| Override في لوحة Vercel يتعارض مع `vercel.json` | Settings → Build → أزل الـ Overrides أو فعّل «Use vercel.json» |
+
+في **Deployments** → اضغط على المحاولة الفاشلة → **Building** لقراءة سطر الخطأ الحقيقي.
 
 ---
 
