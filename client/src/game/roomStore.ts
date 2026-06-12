@@ -350,22 +350,33 @@ export async function submitAnswer(
 
 export async function joinPlayer(
   code: string,
-  name: string
-): Promise<{ playerId: string; state: PublicRoomState } | null> {
+  name: string,
+  preferredPlayerId?: string
+): Promise<{ playerId: string; state: PublicRoomState } | null> { 
   const trimmed = name.trim();
   if (!trimmed) return null;
 
   const room = await loadData(code);
   if (!room || !room.gameCreated) return null;
 
-  let player: InternalPlayer | undefined = room.players.find(
-    (p) => p.name.toLowerCase() === trimmed.toLowerCase()
-  );
+  let player: InternalPlayer | undefined = preferredPlayerId
+    ? room.players.find((p) => p.id === preferredPlayerId)
+    : undefined;
+
+  if (!player) {
+    player = room.players.find(
+      (p) => p.name.toLowerCase() === trimmed.toLowerCase()
+    );
+  }
+
 
   if (player) {
+    // Re-join: keep score as-is, but allow answering again.
+    // Clear currentAnswer/answered so phase UI matches server state.
     player.currentAnswer = null;
     player.answered = false;
   } else {
+
     player = {
       id: newId(),
       name: trimmed,

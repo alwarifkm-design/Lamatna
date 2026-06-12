@@ -185,6 +185,12 @@
   padding-top: 3rem;
 }
 
+.btn-exit-save.active {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+
+
 .final-rank {
   font-size: 1.5rem;
   font-family: var(--font-display);

@@ -3,17 +3,30 @@ import { useSearchParams } from "react-router-dom";
 import { Avatar } from "../components/Avatar";
 import { joinPlayer, submitAnswer, subscribeRoom } from "../game/roomStore";
 import type { PublicRoomState } from "../types";
+import { shouldPreserveSession } from "../lib/exitSave";
+import { ExitSaveButton } from "../components/ExitSaveButton";
+
 import "./PlayPage.css";
 
+
 const PLAYER_KEY = "jamaatna_player";
+
+type StoredPlayer = {
+  roomCode: string;
+  playerId: string;
+  name: string;
+};
 
 export function PlayPage() {
   const [params] = useSearchParams();
   const roomFromUrl = params.get("room") || "";
 
+
   const [step, setStep] = useState<"join" | "play">("join");
   const [roomCode, setRoomCode] = useState(roomFromUrl);
   const [name, setName] = useState("");
+  const [didRestore, setDidRestore] = useState(false);
+
   const [error, setError] = useState("");
   const [room, setRoom] = useState<PublicRoomState | null>(null);
   const [playerId, setPlayerId] = useState("");
@@ -24,6 +37,33 @@ export function PlayPage() {
   }, [roomFromUrl]);
 
   useEffect(() => {
+    // Restore last session ONLY if user pressed "حفظ" before leaving.
+    if (didRestore) return;
+    const preserve = shouldPreserveSession();
+
+    if (!preserve) return;
+
+    const raw = sessionStorage.getItem(PLAYER_KEY);
+    if (!raw) return;
+
+    try {
+      const stored = JSON.parse(raw) as StoredPlayer;
+      if (!stored?.roomCode || !stored?.playerId || !stored?.name) return;
+      if (roomFromUrl && stored.roomCode !== roomFromUrl) return;
+
+      // Keep roomCode; attempt join using same playerId (resume).
+      setRoomCode(stored.roomCode);
+      setName(stored.name);
+      setPlayerId(stored.playerId);
+      setStep("play");
+      setDidRestore(true);
+    } catch {
+      // ignore
+    }
+  }, [didRestore, roomFromUrl]);
+
+
+  useEffect(() => {
     if (step !== "play" || !roomCode || !playerId) return;
     return subscribeRoom(roomCode, "player", (state) => {
       setRoom(state);
@@ -32,9 +72,27 @@ export function PlayPage() {
     });
   }, [step, roomCode, playerId]);
 
+  // If user navigates away without pressing “حفظ”, clear session.
+  useEffect(() => {
+    const onBeforeUnload = () => {
+      if (!shouldPreserveSession()) {
+        try {
+          sessionStorage.removeItem(PLAYER_KEY);
+        } catch {
+          // ignore
+        }
+      }
+    };
+
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, []);
+
   const join = async () => {
+
     setError("");
     const trimmed = name.trim();
+
     if (!trimmed) {
       setError("يجب كتابة اسمك للمشاركة");
       return;
@@ -44,10 +102,20 @@ export function PlayPage() {
       return;
     }
 
-    sessionStorage.removeItem(PLAYER_KEY);
+    // Only remove the stored player session if user didn't request preserve.
+    if (!shouldPreserveSession()) {
+      sessionStorage.removeItem(PLAYER_KEY);
+    }
+
 
     try {
-      const result = await joinPlayer(roomCode.trim(), trimmed);
+      const raw = sessionStorage.getItem(PLAYER_KEY);
+      const stored = raw ? (JSON.parse(raw) as StoredPlayer) : null;
+      const existingPlayerId = stored?.roomCode === roomCode.trim() ? stored.playerId : undefined;
+
+      // If we have a stored playerId for this room, try to re-join by playerId.
+      const result = await joinPlayer(roomCode.trim(), trimmed, existingPlayerId);
+
       if (!result) {
         setError("تعذر الدخول. تأكد من رمز الغرفة وأن المضيف أنشأ اللعبة.");
         return;
@@ -63,6 +131,11 @@ export function PlayPage() {
           name: trimmed,
         })
       );
+
+      // After successful join, reset preserve flag.
+      // (Not strictly required, but avoids repeated auto-restore.)
+      // We'll overwrite via markPreserveSession on explicit save.
+
     } catch (err) {
       setError(err instanceof Error ? err.message : "فشل الاتصال");
     }
@@ -93,6 +166,10 @@ export function PlayPage() {
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
+          <div style={{ width: "100%", textAlign: "right", fontSize: "0.85rem", opacity: 0.75 }}>
+            عند الخروج اختر “حفظ” لإكمال نفس اللعبة عند الرجوع.
+          </div>
+
           <input
             className="input-field"
             placeholder="رمز الغرفة"
@@ -105,6 +182,11 @@ export function PlayPage() {
           <button type="button" className="btn btn-secondary btn-join" onClick={join}>
             دخول اللعبة
           </button>
+
+          <div style={{ width: "100%", marginTop: "0.75rem" }}>
+            <ExitSaveButton />
+          </div>
+
         </div>
       </div>
     );
