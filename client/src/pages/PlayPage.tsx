@@ -3,8 +3,9 @@ import { useSearchParams } from "react-router-dom";
 import { Avatar } from "../components/Avatar";
 import { joinPlayer, submitAnswer, subscribeRoom } from "../game/roomStore";
 import type { PublicRoomState } from "../types";
-import { shouldPreserveSession } from "../lib/exitSave";
+import { clearPreserveSession, shouldPreserveSession, EXIT_SAVE_FLAGS } from "../lib/exitSave";
 import { ExitSaveButton } from "../components/ExitSaveButton";
+
 
 import "./PlayPage.css";
 
@@ -72,21 +73,41 @@ export function PlayPage() {
     });
   }, [step, roomCode, playerId]);
 
-  // If user navigates away without pressing “حفظ”, clear session.
+  // If user closes tab/window: show confirmation when they did NOT press “حفظ”.
+  // Browsers don't allow a custom choice; returning a value triggers the built-in prompt.
   useEffect(() => {
-    const onBeforeUnload = () => {
-      if (!shouldPreserveSession()) {
-        try {
-          sessionStorage.removeItem(PLAYER_KEY);
-        } catch {
-          // ignore
-        }
-      }
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (shouldPreserveSession()) return;
+
+      // Trigger browser confirmation dialog.
+      e.preventDefault();
+      e.returnValue = "";
+
+      // Do NOT remove sessionStorage here.
+      // If user confirms leaving, next load will not restore because preserve flag won't be set.
     };
 
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, []);
+
+  const closeGameSession = () => {
+    // User explicitly wants to stop the continuing game.
+    try {
+      clearPreserveSession();
+      sessionStorage.removeItem(PLAYER_KEY);
+    } catch {
+      // ignore
+    }
+
+    // Soft reset UI: go back to join step.
+    setStep("join");
+    setRoom(null);
+    setPlayerId("");
+    setSelected(null);
+    setDidRestore(false);
+  };
+
 
   const join = async () => {
 
